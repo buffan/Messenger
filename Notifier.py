@@ -7,7 +7,8 @@ from tkinter import messagebox
 from tkinter import BitmapImage
 from collections import defaultdict
 from math import ceil
-import base64
+from io import BytesIO
+from PIL import ImageTk, Image
 
 
 def SendMessage(*args):
@@ -34,41 +35,58 @@ def SendMessage(*args):
             continue
         # If multiple matches found on friends list
         elif len(possible_friends) > 1:
-            friend = DisambiguateFriends(client, possible_friends, person)
+            friend_uid = DisambiguateFriends(client, possible_friends, person)
+            print(friend_uid)
+            print('Cats')
         # If only 1 match found on friends list
         else:
-            friend = possible_friends[0]
+            friend_uid = possible_friends[0].uid
         #sent = client.send(friend.uid, message)
     print('All messages sent. Can safely exit program.')
 
 
-#TODO: Implement
+#TODO: Return uid to calling method
 def DisambiguateFriends(client, possibilities, person):
     window = Toplevel(mainframe)
     window.title('Multiple results found')
 
     num_possibilities = len(possibilities)
     poss_index = 0
+    # Create max of 2 rows
     for r in range(2):
         for c in range(int(ceil(len(possibilities)/2))):
             uid = possibilities[poss_index].uid
-            img = str(base64.standard_b64encode(requests.get(client.getUserInfo(uid)['thumbSrc']).content))
-            print(type(img))
-            img = PhotoImage(img)
-            b = ttk.Button(window, text=uid, image=img)
-            b.configure(command=lambda: print(b.cget('text')))
-            b.grid(column=c, row=r)
+
+            content = requests.get(client.getUserInfo(uid)['thumbSrc']).content
+            resized_image = ResizeImage(Image.open(BytesIO(content)))
+            img = ImageTk.PhotoImage(resized_image)
+
+            # I have no idea why this works. The internet provided this magical lambda answer.
+            b = ttk.Button(window, command=lambda uid=uid: uid, image=img)
+            b.grid(column=c, row=r, sticky=(N, S, E, W))
             b.image = img
-            print('Button with id {} created at {}, {}'.format(uid, r, c))
             poss_index += 1
 
     for child in window.winfo_children():
         child.grid_configure(padx=2, pady=2)
-            
+
+
+def ResizeImage(img):
+    '''
+    Rescales given image to match end_width
+    '''
+    end_width = 75
+    percentage_resize = end_width/float(img.size[0])
+    end_height = int(img.size[1]*percentage_resize)
+    return img.resize((end_width, end_height), Image.ANTIALIAS)
     
 
 
 def CompileNominations():
+    '''
+    Opens nominations csv, creates dictionary {person: list of positions}
+    Return: {person: positions} dictionary
+    '''
     with open(path_field.get('1.0', 'end-1c')) as f:
         # Eliminate headers
         f.readline() 
@@ -89,6 +107,7 @@ def SetPath(*args):
         path_field.insert('1.0', result)
         path_field['state'] = 'disabled'
  
+
 
 root = Tk()
 root.title('Messenger')
