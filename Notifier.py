@@ -1,11 +1,23 @@
 import fbchat
+import requests
 from tkinter import *
 from tkinter import ttk
 from tkinter import filedialog
+from tkinter import messagebox
+from tkinter import BitmapImage
 from collections import defaultdict
+from math import ceil
+import base64
 
 
 def SendMessage(*args):
+    #TODO: finish implementation
+    """
+    if '{positions}' not in boilerplate_entry.get('1.0', 'end-1c'):
+        if not messagebox.askyesno(title='Send message?', 
+            message='{positions} not found in boilerplate text. Still send message?'):
+            return
+    """
     email_str = email.get()
     password_str = password.get()
     client = fbchat.Client(email_str, password_str, debug=False)
@@ -13,18 +25,57 @@ def SendMessage(*args):
     for person in noms.keys():
         message = boilerplate_entry.get('1.0', 'end-1c').replace('{positions}', '- ' + '\n- '.join(noms[person]))
         print('{}: {}'.format(person, message))
-        if person == 'Oriana Hollingsworth':
-            fb_friend = client.getUsers(person)[0]
-            sent = client.send(fb_friend.uid, message)
+        possible_friends = client.getUsers(person)
+        # Filter out people not on friends list
+        possible_friends = list(filter(lambda x: client.getUserInfo(x.uid)['is_friend'], possible_friends))
+        # If no matches found on friends list
+        if not possible_friends:
+            print('{} not found on friends list'.format(person))
+            continue
+        # If multiple matches found on friends list
+        elif len(possible_friends) > 1:
+            friend = DisambiguateFriends(client, possible_friends, person)
+        # If only 1 match found on friends list
+        else:
+            friend = possible_friends[0]
+        #sent = client.send(friend.uid, message)
+    print('All messages sent. Can safely exit program.')
+
+
+#TODO: Implement
+def DisambiguateFriends(client, possibilities, person):
+    window = Toplevel(mainframe)
+    window.title('Multiple results found')
+
+    num_possibilities = len(possibilities)
+    poss_index = 0
+    for r in range(2):
+        for c in range(int(ceil(len(possibilities)/2))):
+            uid = possibilities[poss_index].uid
+            img = str(base64.standard_b64encode(requests.get(client.getUserInfo(uid)['thumbSrc']).content))
+            print(type(img))
+            img = PhotoImage(img)
+            b = ttk.Button(window, text=uid, image=img)
+            b.configure(command=lambda: print(b.cget('text')))
+            b.grid(column=c, row=r)
+            b.image = img
+            print('Button with id {} created at {}, {}'.format(uid, r, c))
+            poss_index += 1
+
+    for child in window.winfo_children():
+        child.grid_configure(padx=2, pady=2)
+            
+    
 
 
 def CompileNominations():
     with open(path_field.get('1.0', 'end-1c')) as f:
-        f.readline() #Eliminate headers
+        # Eliminate headers
+        f.readline() 
         d = defaultdict(set)
         for line in f:
-            _, person, position = line.split(',')
-            d[person].add(position[:-1]) #-1 to eliminate endline from cell
+            _, person, position = map(str.strip, line.split(','))
+            d[person].add(position)
     return d
             
 
