@@ -1,25 +1,43 @@
 import fbchat
 import requests
-import json
 from tkinter import *
 from tkinter import ttk
 from tkinter import filedialog
 from tkinter import messagebox
-from tkinter import BitmapImage
 from collections import defaultdict
 from math import ceil
 from io import BytesIO
 from PIL import ImageTk, Image
+from os import path
+
+
+class AutoHideScrollbar(Scrollbar):
+    '''
+    Scrollbar that automatically hides when needed.
+    Taken from effbot.org
+    '''
+    def set(self, lo, hi):
+        if float(lo) <= 0.0 and float(hi) >= 1.0:
+            # grid_remove is currently missing from Tkinter!
+            self.tk.call("grid", "remove", self)
+        else:
+            self.grid()
+        Scrollbar.set(self, lo, hi)
+    def pack(self, **kw):
+        raise TclError("cannot use pack with this widget")
+    def place(self, **kw):
+        raise TclError("cannot use place with this widget")
+
 
 
 def ProcessNominations(*args):
-    #TODO: finish implementation
-    """
+    # Ask user if they still want to send message without {positions} key
     if '{positions}' not in boilerplate_entry.get('1.0', 'end-1c'):
-        if not messagebox.askyesno(title='Send message?', 
-            message='{positions} not found in boilerplate text. Still send message?'):
+        check = '{positions} not found in boilerplate text. Still send message?'
+        # Return if user does not want to send message
+        if not messagebox.askyesno(title='Send message?', message=check):
             return
-    """
+   
     # Attempt login
     email_str = email.get()
     password_str = password.get()
@@ -30,8 +48,22 @@ def ProcessNominations(*args):
         return
 
     nominations = CompileNominations()
+
+    # Progress window setup
+    progress_window = Toplevel()
+    progress_window.title('Progress')
+    progress = StringVar()
+    progress.set('Processed 0/{}'.format(len(nominations.keys())))
+    ttk.Label(progress_window, textvar=progress).grid(row=0, column=0)
+    for child in progress_window.winfo_children():
+        child.grid_configure(padx=2, pady=2)
+
     not_found = []
-    for person in nominations.keys():
+    for counter, person in enumerate(nominations.keys()):
+        # Update process window
+        progress.set('Processed {}/{}'.format(counter, len(nominations.keys())))
+        progress_window.update()
+
         possible_friends = client.getUsers(person)
         # Filter out people not on friends list
         possible_friends = list(filter(lambda x: client.getUserInfo(x.uid)['is_friend'], possible_friends))
@@ -47,22 +79,84 @@ def ProcessNominations(*args):
         else:
             friend_uid = possible_friends[0].uid
             SendMessage(person, friend_uid, nominations, client)
+    progress_window.destroy()
+
     # If some users were not found on friends list, display warning box with their names and positions
     if not_found:
-        not_found_window = Toplevel(mainframe)
-        not_found_window.title('User{} not found'.format('s' if len(not_found) > 1 else ''))
-
-        names_and_positions = '\n\n'.join(['{} - {}'.format(person, ', '.join(nominations[person])) for person in not_found])
-        message = 'The following not found. Please send their messages manually.\n{}'.format(names_and_positions)
-        Label(not_found_window, text=message).grid(row=0, column=0, sticky=(N, S, E, W))
-
-        ttk.Button(not_found_window, text='Ok', command=not_found_window.destroy).grid(row=1, column=0)
-        
-        mainframe.wait_window(not_found_window)
+        DisplayNotFound(not_found, nominations)
 
     messagebox.showinfo('Done!', message='All messages sent. Program will now exit.')
     root.destroy()
 
+
+def DisplayNotFound(not_found, nominations):
+        '''
+        Displays a window with all names not found
+        '''
+        not_found_window = Toplevel(mainframe)
+        not_found_window.geometry(CalcWindowDimensions(not_found, nominations))
+        not_found_window.title('User{} not found'.format('s' if len(not_found) > 1 else ''))
+        # Canvas and frame both required for scrollbar
+        canvas = Canvas(not_found_window, borderwidth=0)
+        frame = Frame(canvas)
+
+        vscrollbar = AutoHideScrollbar(not_found_window, orient='vertical', command=canvas.yview)
+        vscrollbar.grid(row=0, column=1, sticky=(N, S))
+        hscrollbar = AutoHideScrollbar(not_found_window, orient='horizontal', command=canvas.xview)
+        hscrollbar.grid(row=1, column=0, sticky=(E, W))
+
+        canvas.configure(yscrollcommand=vscrollbar.set)
+        canvas.configure(xscrollcommand=hscrollbar.set)
+        canvas.grid(row=0, column=0, sticky=(N, S, E, W))
+        # Allow the frame to expand
+        not_found_window.grid_rowconfigure(0, weight=1)
+        not_found_window.grid_columnconfigure(0, weight=1)
+        frame.rowconfigure(1, weight=1)
+        frame.columnconfigure(1, weight=1)
+
+        canvas.create_window((0, 0), window=frame, anchor='nw')
+        frame.bind('<Configure>', lambda event, canvas=canvas: OnFrameConfigure(canvas))
+
+        # Display list of names not found and associated positions
+        message = 'The following not found. Please send their messages manually.\n\n'
+        names_and_positions = '\n\n'.join(['{} - {}'.format(person, ', '.join(nominations[person])) for person in not_found])
+        Label(frame, text=message, font='Helvetica 14 bold').grid(row=0, column=0, sticky=(E, W))
+        Label(frame, text=names_and_positions, anchor='w', justify='left').grid(row=1, column=0, sticky=(W, E))
+
+        ttk.Button(frame, text='Ok', command=not_found_window.destroy).grid(row=2, column=0, sticky=(S))
+
+        mainframe.wait_window(not_found_window)
+
+
+def CalcWindowDimensions(not_found, nominations):
+    '''
+    Calculates max window dimensions required constrained by screen dimensions
+    '''
+    screen_width = root.winfo_screenwidth()
+    screen_height = root.winfo_screenheight()
+
+    # Values determined by experimentation
+    pixels_per_char = 10
+    pixels_per_col = 31
+    nominations_width = pixels_per_char * max([len(', '.join(positions) + name) for name, positions in nominations.items() if name in not_found])
+    # 2 lines per entry, 1 line of boilerplate, 1 button
+    nominations_height = pixels_per_col *(2*len(not_found)+2)
+
+    width = min(screen_width, nominations_width)
+    height = min(screen_height, nominations_height)
+    x_coord = screen_width//2
+    y_coord = screen_height//2
+
+    print(screen_width, nominations_width, screen_height, nominations_height)
+
+    #return '{}x{}+{}+{}'.format(width, height, x_coord, y_coord)
+    return '{}x{}+0+0'.format(width, height)
+
+def OnFrameConfigure(canvas):
+    '''
+    Event handler for scrollbar move
+    '''
+    canvas.configure(scrollregion=canvas.bbox("all"))
 
 def DisambiguateFriends(possibilities, person, nominations, client):
     '''
@@ -72,7 +166,7 @@ def DisambiguateFriends(possibilities, person, nominations, client):
     window.title('Multiple results found')
 
     l = ttk.Label(window, text='Multiple {}s found. Select the profile picture of the intended user.'.format(person))
-    num_columns = ceil(len(possibilities/2))
+    num_columns = ceil(len(possibilities)/2)
     l.grid(row=0, column=0, columnspan=num_columns)
 
     poss_index = 0
@@ -89,7 +183,7 @@ def DisambiguateFriends(possibilities, person, nominations, client):
             # I have no idea why this command works. The internet provided the magical lambda uid=uid answer.
             b = ttk.Button(window, image=img, command=lambda uid=uid: SendAndClose(person, uid, nominations, client, window))
             b.grid(column=c, row=r, sticky=(N, S, E, W))
-            # Save reference to prevent garbage collection!
+            # Save image reference to prevent garbage collection!
             b.image = img
             poss_index += 1
 
@@ -107,7 +201,6 @@ def SendAndClose(name, uid, nominations, client, window):
     SendMessage(name, uid, nominations, client)
 
 
-
 def SendMessage(name, uid, nominations, client):
     '''
     Sends a message to the user with uid containing their nominations.
@@ -123,8 +216,7 @@ def RescaleImage(img):
     '''
     scale_value = 2.0
     width, height = [int(scale_value*dim) for dim in img.size]
-    return img.resize((width, height), Image.ANTIALIAS)
-    
+    return img.resize((width, height), Image.ANTIALIAS)    
 
 
 def CompileNominations():
@@ -143,14 +235,18 @@ def CompileNominations():
     WriteToFile(d)
     return d
 
+
 def WriteToFile(d):
-    with open('nominations.txt', 'w') as f:
+    '''
+    Writes names and associated positions to log file on Desktop
+    '''
+    file_path = path.join(path.expanduser('~'), path.join('Desktop', 'log.txt'))
+    with open(file_path, 'w') as f:
         for k, v in d.items():
             s = '{}: {}\n'.format(k, ', '.join(v))
             f.write(s)
         
             
-
 def SetPath(*args):
     extensions = [('CSV', '*.csv'), ('All files', '*')]
     dlg = filedialog.Open(mainframe, filetypes=extensions)
@@ -192,7 +288,7 @@ ttk.Label(mainframe, text='Password').grid(column=2, row=4, sticky=(W, E))
 bp_dims = (30, 10) #width by height
 boilerplate_entry = Text(mainframe, width=bp_dims[0], height=bp_dims[1], wrap='word')
 boilerplate_entry.grid(column=3, row=1, sticky=(W, E, N, S), columnspan=1, rowspan=3)
-ttk.Label(mainframe, text='Message body').grid(column=3, row=4, sticky=(W, E))
+ttk.Label(mainframe, text='Message body').grid(column=3, row=4)
 
 ttk.Button(mainframe, text='Send message', command=ProcessNominations).grid(column=3, row=5, sticky=(W, E))
 
