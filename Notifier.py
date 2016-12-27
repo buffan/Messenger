@@ -29,15 +29,23 @@ class AutoHideScrollbar(Scrollbar):
         raise TclError("cannot use place with this widget")
 
 
-
 def ProcessNominations(*args):
+    '''
+    Processes each name in nominations list, searches for matching name in friends list.
+    Performs different actions depending on how many matching names are found.
+    '''
     # Ask user if they still want to send message without {positions} key
     if '{positions}' not in boilerplate_entry.get('1.0', 'end-1c'):
         check = '{positions} not found in boilerplate text. Still send message?'
         # Return if user does not want to send message
         if not messagebox.askyesno(title='Send message?', message=check):
             return
-   
+
+    # Ensure a csv has been selected
+    if not path_field.get('1.0', 'end-1c'):
+        messagebox.showerror(title='Error', message='No CSV selected.')
+        return
+
     # Attempt login
     email_str = email.get()
     password_str = password.get()
@@ -47,9 +55,14 @@ def ProcessNominations(*args):
         messagebox.showerror('Error', message='Incorrect username or password. Try again.')
         return
 
-    nominations = CompileNominations()
+    # Intending to send position notifications
+    if '{positions}' in boilerplate_entry.get('1.0', 'end-1c'):
+        nominations = CompileNominations()
+    # Sending positionless message
+    else:
+        nominations = CompileNames()
 
-    # Progress window setup
+    # --------------------------- Begin progress window setup ---------------------------
     progress_window = Toplevel()
     progress_window.title('Progress')
     progress = StringVar()
@@ -57,10 +70,11 @@ def ProcessNominations(*args):
     ttk.Label(progress_window, textvar=progress).grid(row=0, column=0)
     for child in progress_window.winfo_children():
         child.grid_configure(padx=2, pady=2)
+    # --------------------------- End progress window setup------------------------------
 
     not_found = []
     for counter, person in enumerate(nominations.keys()):
-        # Update process window
+        # Update progress window
         progress.set('Processed {}/{}'.format(counter, len(nominations.keys())))
         progress_window.update()
 
@@ -85,7 +99,7 @@ def ProcessNominations(*args):
     if not_found:
         DisplayNotFound(not_found, nominations)
 
-    messagebox.showinfo('Done!', message='All messages sent. Program will now exit.')
+    messagebox.showinfo(title='Done!', message='All messages sent. Program will now exit.')
     root.destroy()
 
 
@@ -93,6 +107,7 @@ def DisplayNotFound(not_found, nominations):
         '''
         Displays a window with all names not found
         '''
+        # -------------------------- Begin picture selection window setup ----------------------------
         not_found_window = Toplevel(mainframe)
         not_found_window.geometry(CalcWindowDimensions(not_found, nominations))
         not_found_window.title('User{} not found'.format('s' if len(not_found) > 1 else ''))
@@ -105,9 +120,8 @@ def DisplayNotFound(not_found, nominations):
         hscrollbar = AutoHideScrollbar(not_found_window, orient='horizontal', command=canvas.xview)
         hscrollbar.grid(row=1, column=0, sticky=(E, W))
 
-        canvas.configure(yscrollcommand=vscrollbar.set)
-        canvas.configure(xscrollcommand=hscrollbar.set)
         canvas.grid(row=0, column=0, sticky=(N, S, E, W))
+        canvas.configure(yscrollcommand=vscrollbar.set, xscrollcommand=hscrollbar.set)
         # Allow the frame to expand
         not_found_window.grid_rowconfigure(0, weight=1)
         not_found_window.grid_columnconfigure(0, weight=1)
@@ -116,12 +130,13 @@ def DisplayNotFound(not_found, nominations):
 
         canvas.create_window((0, 0), window=frame, anchor='nw')
         frame.bind('<Configure>', lambda event, canvas=canvas: OnFrameConfigure(canvas))
+        # -------------------------- End picture selection window setup ----------------------------
 
         # Display list of names not found and associated positions
-        message = 'The following not found. Please send their messages manually.\n\n'
+        header = 'The following not found. Please send their messages manually.\n\n'
         names_and_positions = '\n\n'.join(['{} - {}'.format(person, ', '.join(nominations[person])) for person in not_found])
-        Label(frame, text=message, font='Helvetica 14 bold').grid(row=0, column=0, sticky=(E, W))
-        Label(frame, text=names_and_positions, anchor='w', justify='left').grid(row=1, column=0, sticky=(W, E))
+        Label(frame, text=header, font='Helvetica 14 bold').grid(row=0, column=0, sticky=(E, W))
+        Label(frame, text=names_and_positions, anchor='w', justify='left').grid(row=1, column=0, sticky=(E, W))
 
         ttk.Button(frame, text='Ok', command=not_found_window.destroy).grid(row=2, column=0, sticky=(S))
 
@@ -136,27 +151,32 @@ def CalcWindowDimensions(not_found, nominations):
     screen_height = root.winfo_screenheight()
 
     # Values determined by experimentation
-    pixels_per_char = 10
+    pixels_per_char = 9
     pixels_per_col = 31
+    # header copied from method above. Not the cleanest implementation, passing as a parameter seemed like too much
+    header = 'The following not found. Please send their messages manually.\n\n'
+    names_and_positions_lengths = ([len(', '.join(positions) + name) for name, positions in nominations.items() if name in not_found])
+    # Include header length in calculation
+    names_and_positions_lengths.append(len(header))
     nominations_width = pixels_per_char * max([len(', '.join(positions) + name) for name, positions in nominations.items() if name in not_found])
     # 2 lines per entry, 1 line of boilerplate, 1 button
-    nominations_height = pixels_per_col *(2*len(not_found)+2)
+    nominations_height = pixels_per_col * (2 * len(not_found) + 2)
 
     width = min(screen_width, nominations_width)
     height = min(screen_height, nominations_height)
-    x_coord = screen_width//2
-    y_coord = screen_height//2
 
-    print(screen_width, nominations_width, screen_height, nominations_height)
+    x_coord = (screen_width - width) //2
+    y_coord = (screen_height - height) // 2
 
-    #return '{}x{}+{}+{}'.format(width, height, x_coord, y_coord)
-    return '{}x{}+0+0'.format(width, height)
+    return '{}x{}+{}+{}'.format(width, height, x_coord, y_coord)
+
 
 def OnFrameConfigure(canvas):
     '''
     Event handler for scrollbar move
     '''
     canvas.configure(scrollregion=canvas.bbox("all"))
+
 
 def DisambiguateFriends(possibilities, person, nominations, client):
     '''
@@ -165,7 +185,7 @@ def DisambiguateFriends(possibilities, person, nominations, client):
     window = Toplevel(mainframe)
     window.title('Multiple results found')
 
-    l = ttk.Label(window, text='Multiple {}s found. Select the profile picture of the intended user.'.format(person))
+    l = ttk.Label(window, text='Multiple "{}" found. Select the profile picture of the intended user.'.format(person))
     num_columns = ceil(len(possibilities)/2)
     l.grid(row=0, column=0, columnspan=num_columns)
 
@@ -215,8 +235,8 @@ def RescaleImage(img):
     Rescales given image
     '''
     scale_value = 2.0
-    width, height = [int(scale_value*dim) for dim in img.size]
-    return img.resize((width, height), Image.ANTIALIAS)    
+    width, height = [int(scale_value * dim) for dim in img.size]
+    return img.resize((width, height), Image.ANTIALIAS)
 
 
 def CompileNominations():
@@ -227,27 +247,50 @@ def CompileNominations():
     d = defaultdict(set)
     with open(path_field.get('1.0', 'end-1c')) as f:
         # Eliminate headers
-        f.readline() 
+        f.readline()
         for line in f:
-            _, person, position = map(str.strip, line.split(','))
+            # Use [:3] to safegaurd against additional fields
+            _, person, position = list(map(str.strip, line.split(',')))[:3]
             # Use title to register the same name regardless of capitalization
             d[person.title()].add(position)
     WriteToFile(d)
     return d
 
 
+def CompileNames():
+    '''
+    Opens nominations csv, creates dictionary {person: ''} for compatibility with program
+    Return {person: ''} dictionary
+    '''
+    d = {}
+    with open(path_field.get('1.0', 'end-1c')) as f:
+        # Eliminate headers
+        f.readline()
+        for line in f:
+            # Use [:2] to safegaurd against additional fields
+            _, person = list(map(str.strip, line.split(',')))[:2]
+            # Use title to register the same name regardless of capitalization
+            d[person.title()] = ''
+    WriteToFile(d)
+    return d
+
+
 def WriteToFile(d):
     '''
-    Writes names and associated positions to log file on Desktop
+    Writes names and associated positions to log file on Desktop.
+    Intended to be more human readable rather than parsed by a program.
     '''
     file_path = path.join(path.expanduser('~'), path.join('Desktop', 'log.txt'))
     with open(file_path, 'w') as f:
-        for k, v in d.items():
-            s = '{}: {}\n'.format(k, ', '.join(v))
+        for person, positions in d.items():
+            s = '{}: {}\n'.format(person, ', '.join(positions))
             f.write(s)
-        
-            
+
+
 def SetPath(*args):
+    '''
+    Displays file selection dialog for CSVs and sets field for path to selected file
+    '''
     extensions = [('CSV', '*.csv'), ('All files', '*')]
     dlg = filedialog.Open(mainframe, filetypes=extensions)
     result = dlg.show()
@@ -257,9 +300,10 @@ def SetPath(*args):
         path_field.delete('1.0', END)
         path_field.insert('1.0', result)
         path_field['state'] = 'disabled'
- 
 
-# GUI setup
+
+
+# ----------------------- GUI setup ------------------------
 root = Tk()
 root.title('Messenger')
 
@@ -285,7 +329,7 @@ ttk.Label(mainframe, text='Path').grid(column=2, row=2, sticky=(W, E))
 ttk.Label(mainframe, text='Email').grid(column=2, row=3, sticky=(W, E))
 ttk.Label(mainframe, text='Password').grid(column=2, row=4, sticky=(W, E))
 
-bp_dims = (30, 10) #width by height
+bp_dims = (30, 10)
 boilerplate_entry = Text(mainframe, width=bp_dims[0], height=bp_dims[1], wrap='word')
 boilerplate_entry.grid(column=3, row=1, sticky=(W, E, N, S), columnspan=1, rowspan=3)
 ttk.Label(mainframe, text='Message body').grid(column=3, row=4)
@@ -298,4 +342,3 @@ for child in mainframe.winfo_children():
 email_entry.focus()
 
 root.mainloop()
-
